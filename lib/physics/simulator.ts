@@ -1,6 +1,6 @@
 import { BODIES, DAY_S, SUN_MU, bodyState, getBody } from './bodies';
 import { add, dot, magnitude, normalize, scale, sub } from './vector';
-import type { FlybyMetrics, ProbeSample, SimulationConfig, Vec3 } from './types';
+import type { BodyPositionSeries, FlybyMetrics, ProbeSample, SimulationConfig, Vec3 } from './types';
 
 type State = { position: Vec3; velocity: Vec3 };
 
@@ -57,21 +57,33 @@ export function simulate(config: SimulationConfig): ProbeSample[] {
   return result;
 }
 
-export function analyzeFlyby(samples: ProbeSample[], assistId: string): FlybyMetrics {
+export function analyzeFlyby(samples: ProbeSample[], assistId: string, bodyPositions?: BodyPositionSeries, expectedTime?: number): FlybyMetrics {
   const assist = getBody(assistId);
+  const planetPosition = (index: number) => bodyPositions?.[assistId]?.[index] ?? bodyState(assist, samples[index].t).position;
   let closestIndex = 0;
   let distanceKm = Infinity;
   samples.forEach((sample, index) => {
-    const distance = magnitude(sub(sample.position, bodyState(assist, sample.t).position));
+    if (expectedTime !== undefined && Math.abs(sample.t - expectedTime) > 45 * DAY_S) return;
+    const distance = magnitude(sub(sample.position, planetPosition(index)));
     if (distance < distanceKm) { distanceKm = distance; closestIndex = index; }
   });
   // Mesure quelques jours avant/après : assez loin de la rencontre, sans que
   // la décélération solaire de plusieurs semaines domine le bilan du fly-by.
-  const span = Math.min(72, closestIndex, samples.length - closestIndex - 1);
-  const before = samples[Math.max(0, closestIndex - span)];
-  const after = samples[Math.min(samples.length - 1, closestIndex + span)];
-  const incomingVelocity = sub(before.velocity, bodyState(assist, before.t).velocity);
-  const outgoingVelocity = sub(after.velocity, bodyState(assist, after.t).velocity);
+  const sampleStep = samples[1]?.t - samples[0]?.t || DAY_S / 24;
+  const span = Math.min(Math.max(1, Math.round(3 * DAY_S / sampleStep)), closestIndex, samples.length - closestIndex - 1);
+  const beforeIndex = Math.max(0, closestIndex - span);
+  const afterIndex = Math.min(samples.length - 1, closestIndex + span);
+  const before = samples[beforeIndex];
+  const after = samples[afterIndex];
+  const planetVelocity = (index: number) => {
+    if (!bodyPositions?.[assistId]) return bodyState(assist, samples[index].t).velocity;
+    const lower = Math.max(0, index - 1);
+    const upper = Math.min(samples.length - 1, index + 1);
+    const elapsed = Math.max(1, samples[upper].t - samples[lower].t);
+    return scale(sub(planetPosition(upper), planetPosition(lower)), 1 / elapsed);
+  };
+  const incomingVelocity = sub(before.velocity, planetVelocity(beforeIndex));
+  const outgoingVelocity = sub(after.velocity, planetVelocity(afterIndex));
   const cosine = dot(normalize(incomingVelocity), normalize(outgoingVelocity));
   return {
     closestIndex,

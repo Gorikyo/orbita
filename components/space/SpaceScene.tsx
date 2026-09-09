@@ -2,11 +2,10 @@
 
 import { Canvas, useFrame, useThree } from '@react-three/fiber';
 import { Html, Line, OrbitControls, Stars } from '@react-three/drei';
-import { useMemo, useRef } from 'react';
+import { useMemo, useRef, type ElementRef } from 'react';
 import * as THREE from 'three';
 import { AU_KM, BODIES, bodyState, getBody } from '@/lib/physics/bodies';
-import { magnitude, normalize } from '@/lib/physics/vector';
-import type { FlybyMetrics, ProbeSample } from '@/lib/physics/types';
+import type { BodyPositionSeries, FlybyMetrics, ProbeSample, Vec3 } from '@/lib/physics/types';
 
 const SCENE_PER_AU = 1.25;
 
@@ -14,11 +13,15 @@ function scenePoint(point: [number, number, number]): [number, number, number] {
   return [point[0] / AU_KM * SCENE_PER_AU, point[2] / AU_KM * SCENE_PER_AU, point[1] / AU_KM * SCENE_PER_AU];
 }
 
-function PlanetSystem({ time, assistId }: { time: number; assistId: string }) {
+function bodyPosition(bodyId: string, time: number, index: number, bodyPositions?: BodyPositionSeries): Vec3 {
+  return bodyPositions?.[bodyId]?.[index] ?? bodyState(getBody(bodyId), time).position;
+}
+
+function PlanetSystem({ time, index, assistId, bodyPositions }: { time: number; index: number; assistId: string; bodyPositions?: BodyPositionSeries }) {
   return (
     <>
       {BODIES.map((body) => {
-        const position = scenePoint(bodyState(body, time).position);
+        const position = scenePoint(bodyPosition(body.id, time, index, bodyPositions));
         const orbitPoints: [number, number, number][] = Array.from({ length: 129 }, (_, i) => {
           const angle = i / 128 * Math.PI * 2;
           return [Math.cos(angle) * body.orbitRadiusKm / AU_KM * SCENE_PER_AU, 0, Math.sin(angle) * body.orbitRadiusKm / AU_KM * SCENE_PER_AU];
@@ -49,25 +52,25 @@ function PlanetSystem({ time, assistId }: { time: number; assistId: string }) {
   );
 }
 
-function VelocityVectors({ samples, flyby, assistId }: { samples: ProbeSample[]; flyby: FlybyMetrics; assistId: string }) {
+function VelocityVectors({ samples, flyby, assistId, bodyPositions }: { samples: ProbeSample[]; flyby: FlybyMetrics; assistId: string; bodyPositions?: BodyPositionSeries }) {
   const helpers = useMemo(() => {
     const sample = samples[flyby.closestIndex];
-    const origin = new THREE.Vector3(...scenePoint(bodyState(getBody(assistId), sample.t).position));
+    const origin = new THREE.Vector3(...scenePoint(bodyPosition(assistId, sample.t, flyby.closestIndex, bodyPositions)));
     const make = (v: [number, number, number], color: number) => {
       const mapped = new THREE.Vector3(v[0], v[2], v[1]).normalize();
       return new THREE.ArrowHelper(mapped, origin, .72, color, .12, .07);
     };
     return [make(flyby.incomingVelocity, 0x56d7ff), make(flyby.outgoingVelocity, 0xffad4f)];
-  }, [assistId, flyby, samples]);
+  }, [assistId, bodyPositions, flyby, samples]);
   return <>{helpers.map((helper, index) => <primitive object={helper} key={index} />)}</>;
 }
 
-function CameraRig({ current, assistId, follow, localView }: { current: ProbeSample; assistId: string; follow: boolean; localView: boolean }) {
+function CameraRig({ current, index, assistId, bodyPositions, follow, localView }: { current: ProbeSample; index: number; assistId: string; bodyPositions?: BodyPositionSeries; follow: boolean; localView: boolean }) {
   const { camera } = useThree();
-  const controls = useRef<any>(null);
+  const controls = useRef<ElementRef<typeof OrbitControls>>(null);
   useFrame(() => {
     const probe = new THREE.Vector3(...scenePoint(current.position));
-    const assist = new THREE.Vector3(...scenePoint(bodyState(getBody(assistId), current.t).position));
+    const assist = new THREE.Vector3(...scenePoint(bodyPosition(assistId, current.t, index, bodyPositions)));
     const target = localView ? assist : follow ? probe : null;
     if (target && controls.current) {
       controls.current.target.lerp(target, .08);
@@ -84,11 +87,18 @@ function CameraRig({ current, assistId, follow, localView }: { current: ProbeSam
   return <OrbitControls ref={controls} enableDamping dampingFactor={.08} minDistance={.25} maxDistance={75} />;
 }
 
-export function SpaceScene({ samples, index, flyby, assistId, follow, localView }: { samples: ProbeSample[]; index: number; flyby: FlybyMetrics; assistId: string; follow: boolean; localView: boolean }) {
-  const allVisibleSamples = samples.slice(0, Math.max(index + 1, 2));
-  const stride = Math.max(1, Math.ceil(allVisibleSamples.length / 3500));
-  const visibleSamples = allVisibleSamples.filter((_, sampleIndex) => sampleIndex % stride === 0 || sampleIndex === allVisibleSamples.length - 1);
-  const path = useMemo(() => visibleSamples.map((sample) => scenePoint(sample.position)), [visibleSamples]);
+export function SpaceScene({ samples, index, flyby, assistId, bodyPositions, predictionStartIndex, follow, localView }: { samples: ProbeSample[]; index: number; flyby: FlybyMetrics; assistId: string; bodyPositions?: BodyPositionSeries; predictionStartIndex?: number; follow: boolean; localView: boolean }) {
+  const { actualPath, plannedPath } = useMemo(() => {
+    const allVisibleSamples = samples.slice(0, Math.max(index + 1, 2));
+    const actualEnd = predictionStartIndex === undefined ? allVisibleSamples.length : Math.min(allVisibleSamples.length, predictionStartIndex + 1);
+    const actualSamples = allVisibleSamples.slice(0, actualEnd);
+    const plannedSamples = predictionStartIndex === undefined || allVisibleSamples.length <= predictionStartIndex ? [] : allVisibleSamples.slice(Math.max(0, predictionStartIndex - 1));
+    const decimate = (items: ProbeSample[]) => {
+      const stride = Math.max(1, Math.ceil(items.length / 3500));
+      return items.filter((_, sampleIndex) => sampleIndex % stride === 0 || sampleIndex === items.length - 1).map((sample) => scenePoint(sample.position));
+    };
+    return { actualPath: decimate(actualSamples), plannedPath: decimate(plannedSamples) };
+  }, [index, predictionStartIndex, samples]);
   const current = samples[index] ?? samples[0];
   const probePosition = scenePoint(current.position);
 
@@ -104,15 +114,16 @@ export function SpaceScene({ samples, index, flyby, assistId, follow, localView 
         <meshBasicMaterial color="#ffd36b" />
       </mesh>
       <pointLight intensity={5} color="#ffb72e" />
-      <PlanetSystem time={current.t} assistId={assistId} />
-      {path.length > 1 && <Line points={path} color="#a8f0ff" lineWidth={2.1} transparent opacity={.9} />}
+      <PlanetSystem time={current.t} index={index} assistId={assistId} bodyPositions={bodyPositions} />
+      {actualPath.length > 1 && <Line points={actualPath} color="#a8f0ff" lineWidth={2.1} transparent opacity={.9} />}
+      {plannedPath.length > 1 && <Line points={plannedPath} color="#7aa8bd" lineWidth={1.8} dashed dashSize={.06} gapSize={.035} transparent opacity={.82} />}
       <mesh position={probePosition}>
         <sphereGeometry args={[.035, 16, 16]} />
         <meshBasicMaterial color="#f5fbff" />
       </mesh>
       <pointLight position={probePosition} intensity={1.2} color="#a7e8ff" distance={.8} />
-      <VelocityVectors samples={samples} flyby={flyby} assistId={assistId} />
-      <CameraRig current={current} assistId={assistId} follow={follow} localView={localView} />
+      <VelocityVectors samples={samples} flyby={flyby} assistId={assistId} bodyPositions={bodyPositions} />
+      <CameraRig current={current} index={index} assistId={assistId} bodyPositions={bodyPositions} follow={follow} localView={localView} />
     </Canvas>
   );
 }

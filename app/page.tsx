@@ -8,8 +8,8 @@ import { Telemetry } from '@/components/space/Telemetry';
 import { DAY_S, getBody } from '@/lib/physics/bodies';
 import { analyzeFlyby, simulate } from '@/lib/physics/simulator';
 import type { MissionMode, SimulationConfig } from '@/lib/physics/types';
-import { simulateVoyager2, VOYAGER_2_ENCOUNTERS, VOYAGER_2_LAUNCH, voyagerFocusBody } from '@/lib/physics/voyager2';
-import { JUICE_ENCOUNTERS, JUICE_LAUNCH, juiceFocusBody, simulateJuice } from '@/lib/physics/juice';
+import { simulateVoyager2, VOYAGER_2_BODY_POSITIONS, VOYAGER_2_ENCOUNTERS, VOYAGER_2_LAUNCH, voyagerFocusEncounter } from '@/lib/physics/voyager2';
+import { JUICE_ACTUAL_THROUGH, JUICE_BODY_POSITIONS, JUICE_ENCOUNTERS, JUICE_LAUNCH, juiceFocusEncounter, simulateJuice } from '@/lib/physics/juice';
 
 const FREE_CONFIG: SimulationConfig = { departureId: 'earth', targetId: 'jupiter', assistId: 'mars', departureDate: '2028-09-18', deltaV: 8.8 };
 const VOYAGER_CONFIG: SimulationConfig = { departureId: 'earth', targetId: 'neptune', assistId: 'jupiter', departureDate: VOYAGER_2_LAUNCH, deltaV: 10.4 };
@@ -25,8 +25,16 @@ export default function Home() {
   const [localView, setLocalView] = useState(false);
   const samples = useMemo(() => missionMode === 'voyager2' ? simulateVoyager2() : missionMode === 'juice' ? simulateJuice() : simulate(config), [config, missionMode]);
   const current = samples[Math.min(index, samples.length - 1)];
-  const activeAssistId = missionMode === 'voyager2' ? voyagerFocusBody(current.t) : missionMode === 'juice' ? juiceFocusBody(current.t) : config.assistId;
-  const flyby = useMemo(() => analyzeFlyby(samples, activeAssistId), [samples, activeAssistId]);
+  const bodyPositions = missionMode === 'voyager2' ? VOYAGER_2_BODY_POSITIONS : missionMode === 'juice' ? JUICE_BODY_POSITIONS : undefined;
+  const activeEncounter = missionMode === 'voyager2' ? voyagerFocusEncounter(current.t) : missionMode === 'juice' ? juiceFocusEncounter(current.t) : undefined;
+  const activeAssistId = activeEncounter?.bodyId ?? config.assistId;
+  const flyby = useMemo(() => analyzeFlyby(samples, activeAssistId, bodyPositions, activeEncounter?.day === undefined ? undefined : activeEncounter.day * DAY_S), [samples, activeAssistId, bodyPositions, activeEncounter]);
+  const predictionStartIndex = useMemo(() => {
+    if (missionMode !== 'juice') return undefined;
+    const cutoff = (Date.parse(`${JUICE_ACTUAL_THROUGH}T23:59:59Z`) - Date.parse(`${JUICE_LAUNCH}T00:00:00Z`)) / 1000;
+    const found = samples.findIndex((sample) => sample.t >= cutoff);
+    return found < 0 ? samples.length : found;
+  }, [missionMode, samples]);
 
   useEffect(() => setIndex(0), [samples]);
   useEffect(() => {
@@ -76,16 +84,16 @@ export default function Home() {
       <section className="workspace">
         <MissionControls config={missionMode !== 'free' ? { ...config, assistId: activeAssistId } : config} onConfig={setConfig} paused={paused} onPaused={setPaused} speed={speed} onSpeed={setSpeed} follow={follow} onFollow={setFollow} localView={localView} onLocalView={setLocalView} onReset={reset} missionMode={missionMode} onMissionMode={changeMissionMode} />
         <div className="viewport-wrap">
-          <SpaceScene samples={samples} index={Math.min(index, samples.length - 1)} flyby={flyby} assistId={activeAssistId} follow={follow} localView={localView} />
+          <SpaceScene samples={samples} index={Math.min(index, samples.length - 1)} flyby={flyby} assistId={activeAssistId} bodyPositions={bodyPositions} predictionStartIndex={predictionStartIndex} follow={follow} localView={localView} />
           <div className="viewport-topline"><span>Vue héliocentrique 3D</span><span><MousePointer2 /> Glisser pour tourner · molette pour zoomer</span></div>
-          <div className="legend"><span><i className="probe-dot" />Sonde</span><span><i className="in-vector" />Vitesse avant</span><span><i className="out-vector" />Vitesse après</span></div>
+          <div className="legend"><span><i className="probe-dot" />Sonde</span>{missionMode === 'juice' ? <><span><i className="actual-path" />Trajet parcouru</span><span><i className="planned-path" />Trajet prévu</span></> : <><span><i className="in-vector" />Vitesse avant</span><span><i className="out-vector" />Vitesse après</span></>}</div>
           {closeToFlyby && !localView && <button className="flyby-callout" onClick={() => setLocalView(true)}><span className="focus-icon">◎</span><span><strong>Rencontre planétaire</strong>Ouvrir la vue locale de {getBody(activeAssistId).name}</span></button>}
           <div className="time-card"><span>Temps de mission</span><strong>J + {elapsedDays.toFixed(1)}</strong><small>{new Date(new Date(config.departureDate).getTime() + elapsedDays * 86400000).toLocaleDateString('fr-FR', { day: '2-digit', month: 'short', year: 'numeric' })}</small></div>
         </div>
         <aside className="data-panel">
           <div className="panel-heading"><span>Télémétrie en direct</span><i className={paused ? '' : 'live'}>LIVE</i></div>
-          <Telemetry current={current} flyby={flyby} assistId={activeAssistId} />
-          <div className="explain-card"><Info /><div><strong>{missionMode === 'voyager2' ? 'Reconstitution Voyager 2' : missionMode === 'juice' ? 'Trajectoire JUICE · ESA' : 'Comment lire le fly-by ?'}</strong><p>{missionMode === 'voyager2' ? 'La courbe suit les dates historiques NASA/JPL dans notre système d’orbites simplifiées. Les rencontres sont fidèles à la chronologie, pas aux éphémérides exactes.' : missionMode === 'juice' ? 'Les dates et l’ordre des assistances suivent le calendrier ESA. La courbe entre les rencontres est une interpolation pédagogique, pas une éphéméride de navigation.' : 'La planète courbe la vitesse relative de la sonde. Comme elle se déplace autour du Soleil, cette rotation peut modifier la vitesse héliocentrique sans moteur.'}</p>{missionMode === 'juice' && <small>Encelade est la cible prioritaire de la future mission Voyage 2050, mais sa trajectoire détaillée n’est pas encore publiée.</small>}</div></div>
+          <Telemetry current={current} currentIndex={Math.min(index, samples.length - 1)} samples={samples} flyby={flyby} assistId={activeAssistId} bodyPositions={bodyPositions} />
+          <div className="explain-card"><Info /><div><strong>{missionMode === 'voyager2' ? 'Reconstitution Voyager 2' : missionMode === 'juice' ? 'Trajectoire JUICE · ESA' : 'Comment lire le fly-by ?'}</strong><p>{missionMode === 'voyager2' ? 'Positions et vitesses issues du noyau SPICE officiel NASA/JPL, dans le référentiel héliocentrique ECLIPJ2000.' : missionMode === 'juice' ? 'Positions et vitesses issues du noyau SPICE opérationnel ESA. Le trait plein montre le trajet parcouru ; le pointillé, la trajectoire prévue.' : 'La planète courbe la vitesse relative de la sonde. Comme elle se déplace autour du Soleil, cette rotation peut modifier la vitesse héliocentrique sans moteur.'}</p>{missionMode === 'juice' && <small>Données parcourues jusqu’au 9 septembre 2026 · trajectoire planifiée jusqu’à l’arrivée à Jupiter en juillet 2031. Encelade reste un concept futur sans trajectoire détaillée publiée.</small>}</div></div>
           <div className="vector-key"><span><i className="vector-line before" />Vecteur entrant</span><span><i className="vector-line after" />Vecteur sortant</span></div>
         </aside>
       </section>

@@ -2,6 +2,8 @@ export type Vec3 = [number, number, number];
 
 export type MissionMode = 'voyager2' | 'juice' | 'free';
 
+export type BodyPositionSeries = Record<string, Vec3[]>;
+
 export type Body = {
   id: string;
   name: string;

@@ -46,7 +46,7 @@ export function MissionControls({ config, onConfig, paused, onPaused, speed, onS
       </div>
       <label className="toggle-row"><span><Satellite />Suivre la sonde</span><Switch checked={follow} onCheckedChange={onFollow} /></label>
       <label className="toggle-row"><span><Focus />Vue locale fly-by</span><Switch checked={localView} onCheckedChange={onLocalView} /></label>
-      <p className="assumption">Modèle simplifié : orbites circulaires imposées, corps ponctuels et plan orbital quasi commun. Le rendu agrandit les planètes pour les rendre visibles.</p>
+      <p className="assumption">{missionMode === 'free' ? 'Modèle simplifié : orbites circulaires imposées, corps ponctuels et plan orbital quasi commun.' : 'Trajectoire et positions planétaires issues des éphémérides SPICE officielles.'} Le rendu agrandit les planètes pour les rendre visibles.</p>
     </aside>
   );
 }
