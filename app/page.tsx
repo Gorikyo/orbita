@@ -101,7 +101,7 @@ export default function Home() {
           <input aria-label="Position dans la mission" type="range" min={0} max={samples.length - 1} value={index} onPointerDown={() => setPaused(true)} onChange={(event) => setIndex(Number(event.target.value))} />
         </div>
         <div className={missionMode !== 'free' ? 'milestones voyager' : 'milestones'}>
-          {missionMode === 'voyager2' ? VOYAGER_2_ENCOUNTERS.map((encounter, encounterIndex) => <span key={`${encounter.bodyId}-${encounter.date}`} style={{ left: `${encounter.day / VOYAGER_2_ENCOUNTERS.at(-1)!.day * 100}%` }}>{encounter.label}</span>) : missionMode === 'juice' ? JUICE_ENCOUNTERS.map((encounter) => <span key={`${encounter.bodyId}-${encounter.date}`} style={{ left: `${encounter.day / JUICE_ENCOUNTERS.at(-1)!.day * 100}%` }}>{encounter.label}</span>) : <><span>Départ</span><span style={{ left: `${flyby.closestIndex / samples.length * 100}%` }}>Assistance · {getBody(config.assistId).name}</span><span>Arrivée théorique</span></>}
+          {missionMode === 'voyager2' ? VOYAGER_2_ENCOUNTERS.map((encounter) => <span key={`${encounter.bodyId}-${encounter.date}`} style={{ left: `${encounter.day / VOYAGER_2_ENCOUNTERS.at(-1)!.day * 100}%` }}>{encounter.label}</span>) : missionMode === 'juice' ? JUICE_ENCOUNTERS.map((encounter) => <span key={`${encounter.bodyId}-${encounter.date}`} style={{ left: `${encounter.day / JUICE_ENCOUNTERS.at(-1)!.day * 100}%` }}>{encounter.label}</span>) : <><span>Départ</span><span style={{ left: `${flyby.closestIndex / samples.length * 100}%` }}>Assistance · {getBody(config.assistId).name}</span><span>Arrivée théorique</span></>}
         </div>
       </footer>
     </main>
